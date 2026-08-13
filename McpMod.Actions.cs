@@ -675,10 +675,16 @@ public static partial class McpMod
 
         int index = indexElem.GetInt32();
 
+        // Optional override so a caller can force an interaction path without
+        // waiting on a mod rebuild: "grid", "holder", or "auto" (default).
+        string method = data.TryGetValue("method", out var methodElem)
+            ? (methodElem.GetString() ?? "auto").ToLowerInvariant()
+            : "auto";
+
         if (overlay is NCardGridSelectionScreen gridScreen)
         {
             var grid = FindFirst<NCardGrid>(gridScreen);
-            if (grid == null)
+            if (grid == null && method != "holder")
                 return Error("Card grid not found in selection screen");
 
             var holders = FindAllSortedByPosition<NGridCardHolder>(gridScreen);
@@ -687,12 +693,28 @@ public static partial class McpMod
 
             var holder = holders[index];
             string cardName = SafeGetText(() => holder.CardModel?.Title) ?? "unknown";
-            grid.EmitSignal(NCardGrid.SignalName.HolderPressed, holder);
+
+            // The enchant screen is an NCardGridSelectionScreen subclass, but it
+            // doesn't act on the grid's HolderPressed signal -- emitting it
+            // reports success while the screen sits there, which is what left
+            // automated runs stuck on "Choose a card to Enchant" until they
+            // timed out. It picks directly off the holder, like the
+            // choose-a-card screens do.
+            bool useHolder = method == "holder"
+                || (method == "auto" && gridScreen.GetType().Name.Contains("Enchant"));
+
+            if (useHolder)
+                holder.EmitSignal(NCardHolder.SignalName.Pressed, holder);
+            else
+                grid!.EmitSignal(NCardGrid.SignalName.HolderPressed, holder);
 
             return new Dictionary<string, object?>
             {
                 ["status"] = "ok",
-                ["message"] = $"Toggling card selection: {cardName}"
+                ["message"] = $"Toggling card selection: {cardName}",
+                // Reported so a caller that sees no effect knows what to retry.
+                ["method"] = useHolder ? "holder" : "grid",
+                ["screen"] = gridScreen.GetType().Name
             };
         }
         else if (overlay is NChooseACardSelectionScreen chooseScreen)
