@@ -694,14 +694,19 @@ public static partial class McpMod
             var holder = holders[index];
             string cardName = SafeGetText(() => holder.CardModel?.Title) ?? "unknown";
 
-            // The enchant screen is an NCardGridSelectionScreen subclass, but it
-            // doesn't act on the grid's HolderPressed signal -- emitting it
-            // reports success while the screen sits there, which is what left
-            // automated runs stuck on "Choose a card to Enchant" until they
-            // timed out. It picks directly off the holder, like the
-            // choose-a-card screens do.
-            bool useHolder = method == "holder"
-                || (method == "auto" && gridScreen.GetType().Name.Contains("Enchant"));
+            // NCardGrid.HolderPressed is the signal the grid *emits after* a
+            // holder is pressed. Emitting it directly notifies the grid's
+            // subscribers while skipping the grid's own selection bookkeeping,
+            // so screens that read that bookkeeping never register the click:
+            // the call reports success and the screen sits unchanged. That
+            // stranded runs on "Choose a card to Enchant" and on event screens
+            // like "Choose 2 Common Cards to Add to Your Deck", where every
+            // card could be clicked and Confirm still refused.
+            //
+            // Pressing the holder drives the real signal chain, which is what
+            // the choose-a-card path already does. "grid" remains available via
+            // the method parameter for anything that depends on the old path.
+            bool useHolder = method != "grid";
 
             if (useHolder)
                 holder.EmitSignal(NCardHolder.SignalName.Pressed, holder);
