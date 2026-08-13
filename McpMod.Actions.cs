@@ -38,6 +38,8 @@ using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 using MegaCrit.Sts2.Core.Nodes.Screens.GameOverScreen;
 using MegaCrit.Sts2.Core.Nodes.Screens.Timeline;
 using MegaCrit.Sts2.Core.Nodes.Screens.ProfileScreen;
+using MegaCrit.Sts2.Core.Nodes.Screens.PauseMenu;
+using MegaCrit.Sts2.Core.Nodes.TopBar;
 using Godot;
 
 namespace STS2_MCP;
@@ -87,8 +89,64 @@ public static partial class McpMod
             "crystal_sphere_set_tool" => ExecuteCrystalSphereSetTool(data),
             "crystal_sphere_click_cell" => ExecuteCrystalSphereClickCell(data),
             "crystal_sphere_proceed" => ExecuteCrystalSphereProceed(),
+            "open_pause_menu" => ExecuteOpenPauseMenu(),
+            "resume" => ExecuteResumeFromPauseMenu(),
+            "give_up" => ExecuteGiveUp(),
             _ => Error($"Unknown action: {action}")
         };
+    }
+
+    // Not exposed by upstream STS2MCP as of v0.110.1 -- added in this fork.
+    // The in-run pause menu (opened via the top bar's pause icon, or Esc in the
+    // normal client) has a "Give Up" button that opens a Yes/No confirmation
+    // popup (NAbandonRunConfirmPopup). None of this was reachable through the
+    // mod's action API before, only the main-menu-only "abandon_run" for an
+    // already-saved, not-currently-active run.
+    //
+    // The confirmation popup itself needs no dedicated action: it's an
+    // NVerticalPopup, which the mod's existing generic popup machinery
+    // (BuildVisiblePopupState / ExecuteMenuSelect's FindVisibleVerticalPopup
+    // path) already surfaces as state_type "menu" / menu_screen "popup" with
+    // "yes"/"no" options, clickable via the ordinary menu_select action.
+    private static Dictionary<string, object?> ExecuteOpenPauseMenu()
+    {
+        var tree = (Godot.Engine.GetMainLoop()) as SceneTree;
+        if (tree?.Root == null)
+            return Error("Cannot access scene tree");
+
+        var existing = FindFirst<NPauseMenu>(tree.Root);
+        if (existing != null && IsNodeVisible(existing))
+            return new Dictionary<string, object?> { ["status"] = "ok", ["message"] = "Pause menu already open" };
+
+        var pauseButton = FindFirst<NTopBarPauseButton>(tree.Root);
+        if (pauseButton == null)
+            return Error("Pause button not found - are you in a run?");
+
+        pauseButton.ForceClick();
+        return new Dictionary<string, object?> { ["status"] = "ok", ["message"] = "Opening pause menu" };
+    }
+
+    private static Dictionary<string, object?> ExecuteResumeFromPauseMenu()
+    {
+        var tree = (Godot.Engine.GetMainLoop()) as SceneTree;
+        var pauseMenu = tree?.Root != null ? FindFirst<NPauseMenu>(tree.Root) : null;
+        if (pauseMenu == null || !IsNodeVisible(pauseMenu))
+            return Error("Pause menu is not open");
+
+        return ClickMenuButtonField(pauseMenu, "_resumeButton", "Resuming");
+    }
+
+    private static Dictionary<string, object?> ExecuteGiveUp()
+    {
+        var tree = (Godot.Engine.GetMainLoop()) as SceneTree;
+        var pauseMenu = tree?.Root != null ? FindFirst<NPauseMenu>(tree.Root) : null;
+        if (pauseMenu == null || !IsNodeVisible(pauseMenu))
+            return Error("Pause menu is not open. Use open_pause_menu first.");
+
+        var result = ClickMenuButtonField(pauseMenu, "_giveUpButton", "Opening give-up confirmation");
+        if ((string?)result["status"] == "ok")
+            result["message"] = "Opening give-up confirmation. Use menu_select with option 'yes' or 'no'.";
+        return result;
     }
 
     private static Dictionary<string, object?> ExecutePlayCard(Player player, Dictionary<string, JsonElement> data)
