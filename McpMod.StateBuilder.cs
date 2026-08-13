@@ -970,7 +970,15 @@ public static partial class McpMod
             catch { }
 
             info["expected_player_count"] = lobby.Run?.Players?.Count ?? 0;
-            info["connected_player_count"] = lobby.ConnectedPlayerIds?.Count ?? 0;
+            // LoadRunLobby.ConnectedPlayerIds no longer exists as of STS2 v0.110.1 (the game
+            // stopped exposing a direct connected-peer list from this type). IsPlayerReady is
+            // the only remaining per-player signal, so we approximate "connected" as "ready"
+            // (a player must be connected to have readied up) for anyone but the local player,
+            // who is always connected. This can undercount players who joined but haven't
+            // readied yet -- there's no way to distinguish that from "not connected" anymore.
+            bool IsApproxConnected(ulong netId) =>
+                netId == lobby.NetService.NetId || lobby.IsPlayerReady(netId);
+            info["connected_player_count"] = lobby.Run?.Players?.Count(p => IsApproxConnected(p.NetId)) ?? 0;
 
             // LoadRunLobby no longer exposes IsAboutToBeginGame in the public game API,
             // so derive the same readiness summary from connected players and ready flags.
@@ -979,11 +987,9 @@ public static partial class McpMod
             try
             {
                 var runPlayers = lobby.Run?.Players;
-                var connectedPlayerIds = lobby.ConnectedPlayerIds;
                 aboutToBegin = runPlayers != null
-                    && connectedPlayerIds != null
                     && runPlayers.Count > 0
-                    && runPlayers.All(player => connectedPlayerIds.Contains(player.NetId) && lobby.IsPlayerReady(player.NetId));
+                    && runPlayers.All(player => lobby.IsPlayerReady(player.NetId));
             }
             catch { }
             info["all_ready"] = aboutToBegin;
@@ -997,9 +1003,9 @@ public static partial class McpMod
                 {
                     foreach (var sp in lobby.Run.Players)
                     {
-                        bool isConnected = lobby.ConnectedPlayerIds?.Contains(sp.NetId) ?? false;
                         bool isReady = false;
                         try { isReady = lobby.IsPlayerReady(sp.NetId); } catch { }
+                        bool isConnected = sp.NetId == lobby.NetService.NetId || isReady;
                         players.Add(new Dictionary<string, object?>
                         {
                             ["id"] = sp.NetId.ToString(),
