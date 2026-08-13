@@ -1349,31 +1349,56 @@ public static partial class McpMod
         if (monster?.NextMove is MoveState moveState)
         {
             var intents = new List<Dictionary<string, object?>>();
+            bool stunned = false;
             foreach (var intent in moveState.Intents)
             {
+                // A stunned creature performs no logic on its stunned turn
+                // (CreatureCmd.Stun), but nothing in the emitted state said so:
+                // clients could only guess from IntentType, and would treat the
+                // enemy as a live threat. Report it from the intent's own type,
+                // which can't be misread the way a label can.
+                bool isStun = intent is StunIntent;
+                stunned |= isStun;
+
                 var intentData = new Dictionary<string, object?>
                 {
-                    ["type"] = intent.IntentType.ToString()
+                    ["type"] = intent.IntentType.ToString(),
+                    // The concrete class is always available and never throws,
+                    // so clients can recognise intents whose label or type is
+                    // unhelpful.
+                    ["intent_class"] = intent.GetType().Name,
+                    ["is_stun"] = isStun
                 };
-                try
+
+                var targets = creature.CombatState?.PlayerCreatures;
+                if (targets != null)
                 {
-                    var targets = creature.CombatState?.PlayerCreatures;
-                    if (targets != null)
+                    // Label and hover tip are fetched separately: StunIntent's
+                    // hover tip is documented to throw ObjectDisposedException
+                    // after a room transition (PRG-7151), and sharing one try
+                    // meant that also discarded a perfectly good label.
+                    try
                     {
                         string label = intent.GetIntentLabel(targets, creature).GetFormattedText();
                         intentData["label"] = StripRichTextTags(label);
+                    }
+                    catch { /* some intents have no meaningful label */ }
 
+                    try
+                    {
                         var hoverTip = intent.GetHoverTip(targets, creature);
                         if (hoverTip.Title != null)
                             intentData["title"] = StripRichTextTags(hoverTip.Title);
                         if (hoverTip.Description != null)
                             intentData["description"] = StripRichTextTags(hoverTip.Description);
                     }
+                    catch { /* see PRG-7151 above */ }
                 }
-                catch { /* intent label may fail for some types */ }
+
                 intents.Add(intentData);
             }
             state["intents"] = intents;
+            state["stunned"] = stunned;
         }
 
         return state;
